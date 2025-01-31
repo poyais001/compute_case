@@ -1,0 +1,164 @@
+####################################################################################################
+#
+# TLSPH example:  elongate a 2d strip of aluminum py pulling its ends apart  
+#
+# unit sytem: GPa / mm / ms
+#
+####################################################################################################
+
+
+####################################################################################################
+# MATERIAL PARAMETERS
+####################################################################################################
+variable        E equal 211.0 # Young's modulus
+variable        nu equal 0.33 # Poisson ratio
+variable        rho equal 7750 # initial mass density
+variable        q1 equal 0.06 # standard artificial viscosity linear coefficient
+variable        q2 equal 0.0  # standard artificial viscosity quadratic coefficient
+variable        hg equal 10.0 # hourglass control coefficient
+variable        cp equal 1.0  # heat capacity of material -- not used here
+variable        sigma_yield equal 0.499 # plastic yield stress
+variable        contact_stiffness equal 0.2
+
+variable        GTN_Q1 equal 0.22
+variable        GTN_Q2 equal 0.49153
+variable        GTN_fn equal 0.04
+variable        GTN_sn equal 0.01
+variable        GTN_epsn equal 0.5
+variable        GTN_f0 equal 0.0001
+variable        GTN_fcr equal 0.01
+variable        GTN_fF equal 0.2
+variable        GTN_komega equal 5.5
+# variable        D1 equal 0.636
+# variable        D2 equal 1.936
+# variable        D3 equal -2.969
+# variable        D4 equal -0.0140
+# variable        D5 equal 1.014
+
+
+####################################################################################################
+# INITIALIZE LAMMPS
+####################################################################################################
+dimension       3
+units			si
+boundary        sm sm sm # simulation box boundaries
+atom_style      smd
+atom_modify		map array
+comm_modify     vel yes
+neigh_modify    every 10 delay 0 check yes # re-build neighbor list every 10 steps
+newton          off
+
+####################################################################################################
+# CREATE INITIAL GEOMETRY
+####################################################################################################
+
+read_data c:\lammps_project\compute_example\NewInput\use_data\upper_layer_beam.data extra/atom/types 2 group upper_layer_beam_atoms
+read_data c:\lammps_project\compute_example\NewInput\use_data\lower_layer_beam.data add append offset 1 0 0 0 0 shift 0 0 0.8 group lower_layer_beam_atoms
+read_data c:\lammps_project\compute_example\NewInput\use_data\indenter.data add append offset 2 0 0 0 0 group indenter_atoms
+
+# type 1 Al 上层梁
+# type 2 Fe 下层梁
+# type 3 Fe 压子
+
+group beam_atoms union upper_layer_beam_atoms lower_layer_beam_atoms
+
+group Al_atoms union upper_layer_beam_atoms
+group Fe_atoms union lower_layer_beam_atoms indenter_atoms
+
+group tlsph type 1 2 3
+
+####################################################################################################
+# DISCRETIZATION PARAMETERS
+####################################################################################################
+variable 	l0 equal 1.0
+variable 	h equal 2.01*${l0} # SPH smoothing kernel radius
+variable 	vol_one equal ${l0}^3 # volume of one particle -- assuming unit thickness
+variable 	skin equal ${h} # Verlet list range
+neighbor    ${skin} bin
+set 		group Al_atoms volume ${vol_one}
+set 		group Fe_atoms volume ${vol_one}
+set         group Al_atoms smd/mass/density 2700
+set         group Fe_atoms smd/mass/density ${rho} # mass 7750
+set 		group Al_atoms diameter ${h} # set SPH kernel radius
+set 		group Fe_atoms diameter ${h}
+
+####################################################################################################
+# DEFINE VELOCITY BOUNDARY CONDITIONS
+####################################################################################################
+region 		    region_wall block 29 30 -5 5 -5 6 units box
+region 		    region_IndenterTop block 3 6 -4 4 10 10 units box
+group           wall_atoms region region_wall
+group           IndenterTop_atoms region region_IndenterTop
+fix             vel_bundary_wall wall_atoms smd/setvel 0 0 0
+fix             vel_bundary_IndenterTop IndenterTop_atoms smd/setvel 0 0 -0.001
+
+####################################################################################################
+# INTERACTION PHYSICS / MATERIAL MODEL
+# We use polynomial EOS for the pressure and the Johnson Cook strength model
+# An integration point fails (cannot support tension anymore) if the plastic strain exceeds 0.5.
+####################################################################################################
+# pair_style      hybrid/overlay smd/tlsph smd/hertz 1 # activate Total-Lagrangian SPH
+# pair_style      hybrid/overlay smd/tlsph lj/cut 10
+pair_style      hybrid/overlay smd/tlsph lj/cut 5 smd/hertz 1 # activate Total-Lagrangian SPH
+pair_coeff      1 1 smd/tlsph *COMMON 2700 70 ${nu} ${q1} ${q2} ${hg} ${cp} &
+                *STRENGTH_LINEAR_PLASTIC 0.25 0.0 &
+                *FAILURE_MAX_PLASTIC_STRAIN 0.35 &
+                *GURSON_TVERGAARD_NEEDLEMAN ${GTN_Q1} ${GTN_Q2} ${GTN_fn} ${GTN_epsn} ${GTN_f0} ${GTN_sn} ${GTN_fcr} ${GTN_fF} ${GTN_komega}&
+                *EOS_LINEAR & 
+                *END
+pair_coeff      2 2 smd/tlsph *COMMON ${rho} ${E} ${nu} ${q1} ${q2} ${hg} ${cp} &
+                *STRENGTH_LINEAR_PLASTIC ${sigma_yield} 0.0 &
+                *FAILURE_MAX_PLASTIC_STRAIN 0.35 &
+                *GURSON_TVERGAARD_NEEDLEMAN ${GTN_Q1} ${GTN_Q2} ${GTN_fn} ${GTN_epsn} ${GTN_f0} ${GTN_sn} ${GTN_fcr} ${GTN_fF} ${GTN_komega}&
+                *EOS_LINEAR & 
+                *END
+pair_coeff      3 3 smd/tlsph *COMMON ${rho} ${E} ${nu} ${q1} ${q2} ${hg} ${cp} &
+                *STRENGTH_LINEAR_PLASTIC ${sigma_yield} 0.0 &
+                *FAILURE_MAX_PLASTIC_STRAIN 0.35 &
+                *GURSON_TVERGAARD_NEEDLEMAN ${GTN_Q1} ${GTN_Q2} ${GTN_fn} ${GTN_epsn} ${GTN_f0} ${GTN_sn} ${GTN_fcr} ${GTN_fF} ${GTN_komega}&
+                *EOS_LINEAR & 
+                *END
+pair_coeff      1 3 smd/hertz 4 # contact stiffness
+pair_coeff      1 2 lj/cut 0.1 0.2
+pair_coeff      2 3 smd/hertz 4
+####################################################################################################
+# TIME INTEGRATION
+####################################################################################################
+fix             dtfix all smd/adjust_dt 0.1 # dynamically adjust time increment every step
+fix             integration_fix all smd/integrate_tlsph
+
+####################################################################################################
+# SPECIFY TRAJECTORY OUTPUT
+####################################################################################################
+compute         S all smd/tlsph/stress # Cauchy stress tensor
+compute         E all smd/tlsph/strain # Green-Lagrange strain tensor
+compute         nn all smd/tlsph/num/neighs # number of neighbors for each particle
+compute         cr all smd/contact/radius
+compute         p all smd/plastic/strain
+compute         eint all smd/internal/energy
+compute         damage all smd/damage
+compute         alleint all reduce sum c_eint
+variable        etot equal c_alleint+ke+pe
+dump            dump_id all custom 1000 dump.LAMMPS id type x y z vx vy vz &
+                c_S[1] c_S[2] c_S[3] c_nn &
+                c_E[1] c_E[2] c_E[3] &
+                c_damage
+dump_modify     dump_id first yes
+
+####################################################################################################
+# STATUS OUTPUT
+####################################################################################################
+# variable stress equal 0.5*(f_velbot_fix[1]-f_veltop_fix[1])/20
+# variable length equal xcm(top_atoms,x)-xcm(bot_atoms,x)
+# variable strain equal (v_length-${length})/${length} # engineering strain
+variable time equal f_dtfix
+# fix stress_curve all print 10 "${strain} ${stress}" file stress_strain.dat screen no
+
+thermo          100
+thermo_style    custom step dt f_dtfix # v_strain
+
+####################################################################################################
+# RUN SIMULATION
+####################################################################################################
+#fix 2 all enforce2d
+run 1000000

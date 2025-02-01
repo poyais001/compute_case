@@ -161,4 +161,4 @@ thermo_style    custom step dt f_dtfix # v_strain
 # RUN SIMULATION
 ####################################################################################################
 #fix 2 all enforce2d
-run 1000000
+run 50000

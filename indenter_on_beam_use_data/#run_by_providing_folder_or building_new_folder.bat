@@ -42,7 +42,7 @@ REM STEP_StartComputation
 cd %targetFolder%
 echo Ready to start computation.
 pause
-mpiexec -n 8 "C:\lammps_project\lammps-private\build\Release\lmp_msmpi.exe" -in %targetFolder%input.lmp
+mpiexec -n 8 "C:\LAMMPS\lammps-private\build\Release\lmp_msmpi.exe" -in %targetFolder%input.lmp
 
 REM STEP_CheckResultFile
 if exist %targetFolder%dump.LAMMPS (

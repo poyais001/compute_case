@@ -52,9 +52,9 @@ newton          off
 # CREATE INITIAL GEOMETRY
 ####################################################################################################
 
-read_data C:\LAMMPS\compute_case\indenter_on_beam_use_data\upper_layer_beam.data extra/atom/types 2 group upper_layer_beam_atoms
-read_data C:\LAMMPS\compute_case\indenter_on_beam_use_data\lower_layer_beam.data add append offset 1 0 0 0 0 shift 0 0 0.8 group lower_layer_beam_atoms
-read_data C:\LAMMPS\compute_case\indenter_on_beam_use_data\indenter.data add append offset 2 0 0 0 0 group indenter_atoms
+read_data C:\LAMMPS\LAMMPS_PRIVATE\compute_case\indenter_on_beam_use_data\upper_layer_beam.data extra/atom/types 2 group upper_layer_beam_atoms
+read_data C:\LAMMPS\LAMMPS_PRIVATE\compute_case\indenter_on_beam_use_data\lower_layer_beam.data add append offset 1 0 0 0 0 shift 0 0 0.8 group lower_layer_beam_atoms
+read_data C:\LAMMPS\LAMMPS_PRIVATE\compute_case\indenter_on_beam_use_data\indenter.data add append offset 2 0 0 0 0 group indenter_atoms
 
 # type 1 Al 上层梁
 # type 2 Fe 下层梁

@@ -1,0 +1,158 @@
+####################################################################################################
+#
+# TLSPH example:  elongate a 2d strip of aluminum py pulling its ends apart
+#
+# unit system: GPa / mm / ms
+#
+####################################################################################################
+
+####################################################################################################
+# MATERIAL PARAMETERS
+####################################################################################################
+variable        E equal 211.0 # Young's modulus
+variable        nu equal 0.33 # Poisson ratio
+variable        rho equal 7750 # initial mass density
+variable        q1 equal 0.06 # standard artificial viscosity linear coefficient
+variable        q2 equal 0.0  # standard artificial viscosity quadratic coefficient
+variable        hg equal 10.0 # hourglass control coefficient
+variable        cp equal 1.0  # heat capacity of material -- not used here
+variable        sigma_yield equal 0.499 # plastic yield stress
+variable        contact_stiffness equal 0.2
+
+variable        GTN_Q1 equal 1.5
+variable        GTN_Q2 equal 1
+variable        GTN_fn equal 0.04
+variable        GTN_sn equal 0.1
+variable        GTN_epsn equal 0.50
+variable        GTN_f0 equal 0
+variable        GTN_fcr equal 0.15
+variable        GTN_fF equal 0.25
+variable        GTN_komega equal 5.5
+variable        GTN_Stress_Ctrl equal 1
+variable        GTN_C equal 0.1
+variable        GTN_sigmaN equal 0.8
+
+####################################################################################################
+# INITIALIZE LAMMPS
+####################################################################################################
+dimension       2
+units           si
+boundary        sm sm p # simulation box boundaries
+atom_style      smd
+atom_modify     map array
+comm_modify     vel yes
+neigh_modify    every 10 delay 0 check yes # re-build neighbor list every 10 steps
+newton          off
+
+####################################################################################################
+# CREATE INITIAL GEOMETRY
+####################################################################################################
+variable        l0 equal 1.0 # lattice spacing for creating particles
+lattice         sq ${l0}
+region          box block -10 10 -10 10 -0.1 0.1 units box
+create_box      1 box
+create_atoms    1 box
+group           tlsph type 1
+
+####################################################################################################
+# DISCRETIZATION PARAMETERS
+####################################################################################################
+variable        h equal 2.01*${l0} # SPH smoothing kernel radius
+variable        vol_one equal ${l0}^2 # volume of one particle -- assuming unit thickness
+variable        skin equal ${h} # Verlet list range
+neighbor        ${skin} bin
+set             group all volume ${vol_one}
+set             group all smd/mass/density ${rho}
+set             group all diameter ${h} # set SPH kernel radius
+
+####################################################################################################
+# DEFINE VELOCITY BOUNDARY CONDITIONS
+####################################################################################################
+variable        vel0 equal 0.001 # pull velocity
+region          top block EDGE EDGE 9.0 EDGE EDGE EDGE units box
+region          bot block EDGE EDGE EDGE -9.1 EDGE EDGE units box
+group           top region top
+group           bot region bot
+variable        vel_up equal ${vel0}*(1.0-exp(-0.01*time))
+variable        vel_down equal -v_vel_up
+fix             veltop_fix top smd/setvel 0 v_vel_up 0
+fix             velbot_fix bot smd/setvel 0 v_vel_down 0
+
+region          target_region block 0 0 -3 -3 0 0 units box
+group           target_atoms region target_region
+
+####################################################################################################
+# INTERACTION PHYSICS / MATERIAL MODEL
+# We use polynomial EOS for the pressure and the Johnson Cook strength model
+# An integration point fails (cannot support tension anymore) if the plastic strain exceeds 0.5.
+####################################################################################################
+pair_style      smd/tlsph
+pair_coeff      1 1 *COMMON ${rho} ${E} ${nu} ${q1} ${q2} ${hg} ${cp} &
+                *STRENGTH_LINEAR_PLASTIC ${sigma_yield} 0.5 &
+                *GURSON_TVERGAARD_NEEDLEMAN ${GTN_Q1} ${GTN_Q2} ${GTN_fn} ${GTN_sn} ${GTN_epsn} ${GTN_f0} ${GTN_fcr} ${GTN_fF} ${GTN_komega} ${GTN_Stress_Ctrl} ${GTN_C} ${GTN_sigmaN} &
+                *EOS_LINEAR & 
+                *END
+
+####################################################################################################
+# TIME INTEGRATION
+####################################################################################################
+fix             dtfix tlsph smd/adjust_dt 0.1 # dynamically adjust time increment every step
+fix             integration_fix tlsph smd/integrate_tlsph
+
+####################################################################################################
+# SPECIFY TRAJECTORY OUTPUT
+####################################################################################################
+compute         dt_atom all smd/tlsph/dt
+compute         p all smd/plastic/strain
+compute         epsdot all smd/plastic/strain/rate
+compute         S all smd/tlsph/stress # Cauchy stress tensor
+compute         D all smd/tlsph/strain/rate
+compute         E all smd/tlsph/strain
+compute         nn all smd/tlsph/num/neighs # number of neighbors for each particle
+compute         shape all smd/tlsph/shape
+compute         damage all smd/damage
+compute         damage_nucleation all smd/damage/nucleation
+compute         damage_growth all smd/damage/growth
+compute         max_stress all smd/max/stress
+
+variable        vm_stress atom "sqrt(0.5*((c_S[1]-c_S[2])^2 + (c_S[2]-c_S[3])^2 + (c_S[3]-c_S[1])^2 + 6*(c_S[4]^2 + c_S[5]^2 + c_S[6]^2)))"
+variable        mean_stress atom "(c_S[1] + c_S[2] + c_S[3])/3.0"
+variable        vm_strain atom "sqrt(2.0/9.0*((c_E[1]-c_E[2])^2 + (c_E[2]-c_E[3])^2 + (c_E[3]-c_E[1])^2) + 4.0/3.0*(c_E[4]^2 + c_E[5]^2 + c_E[6]^2))"
+variable        mean_strain atom "(c_E[1] + c_E[2] + c_E[3])/3.0"
+
+dump            dump_id all custom 100 dump.LAMMPS id type x y z &
+                c_nn c_p radius c_epsdot &
+                c_damage v_vm_stress v_mean_stress v_vm_strain v_mean_strain c_p &
+                c_damage_nucleation c_damage_growth c_max_stress &
+                c_shape[1] c_shape[2] c_shape[3]
+                # c_S[1] c_S[2] c_S[3] c_S[4] c_S[5] c_S[6] c_S[7] &
+                # c_E[1] c_E[2] c_E[3] c_E[4] c_E[5] c_E[6] &
+                # c_shape[4] c_shape[5] c_shape[6] c_shape[7] &
+                # c_D[1] c_D[2] c_D[4] &
+                # vx vy vz c_dt_atom &
+dump_modify     dump_id first yes
+
+# 加入c_shape 1-3, 可以让ovito识别粒子变形
+
+####################################################################################################
+# STATUS OUTPUT
+####################################################################################################
+# variable        stress equal 0.5*(f_velbot_fix[2]-f_veltop_fix[2])/20
+# variable        length equal xcm(top,y)-xcm(bot,y)
+# variable        strain equal (v_length-${length})/${length} # engineering strain
+# variable        time equal f_dtfix
+
+compute           tg_vm_stress       target_atoms reduce ave v_vm_stress
+compute           tg_max_stress      target_atoms reduce ave c_max_stress
+compute           tg_dmg             target_atoms reduce ave c_damage
+compute           tg_dmg_nucleation  target_atoms reduce ave c_damage_nucleation
+compute           tg_dmg_growth      target_atoms reduce ave c_damage_growth
+
+thermo          100
+thermo_style    custom step dt f_dtfix c_tg_vm_stress c_tg_max_stress c_tg_dmg c_tg_dmg_nucleation c_tg_dmg_growth
+
+####################################################################################################
+# RUN SIMULATION
+####################################################################################################
+#fix            2 all enforce2d
+run             100000
